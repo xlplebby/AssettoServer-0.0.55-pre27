@@ -1,0 +1,5 @@
+D:\Code Stuff\NameColorAndIcons\out-win-x64\steam_api64.dll
+D:\Code Stuff\NameColorAndIcons\out-win-x64\csp_xxhash3.dll
+D:\Code Stuff\NameColorAndIcons\out-win-x64\wwwroot\README.txt
+D:\Code Stuff\NameColorAndIcons\out-win-x64\aspnetcorev2_inprocess.dll
+D:\Code Stuff\NameColorAndIcons\out-win-x64\AssettoServer.exe

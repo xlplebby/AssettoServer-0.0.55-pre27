@@ -14,12 +14,9 @@ public abstract class OpenSlotFilterBase : IOpenSlotFilter
         _nextFilter = next;
     }
 
-    public virtual async ValueTask<bool> IsSlotOpen(EntryCar entryCar, ulong guid)
+    public virtual bool IsSlotOpen(EntryCar entryCar, ulong guid)
     {
-        if (_nextFilter == null)
-            return true;
-
-        return await _nextFilter.IsSlotOpen(entryCar, guid);
+        return _nextFilter?.IsSlotOpen(entryCar, guid) ?? true;
     }
 
     public virtual Task<AuthFailedResponse?> ShouldAcceptConnectionAsync(ACTcpClient client, HandshakeRequest request)

@@ -20,7 +20,7 @@ public class ServerConfiguration
     [IniField("SERVER", "TRACK")] public string Track { get; internal set; } = "";
     [IniField("SERVER", "CONFIG_TRACK")] public string TrackConfig { get; init; } = "";
     [IniField("SERVER", "SUN_ANGLE")] public float SunAngle { get; init; }
-    [IniField("SERVER", "LOOP_MODE")] public bool Loop { get; init; } = true;
+    [IniField("SERVER", "LOOP_MODE")] public bool Loop { get; init; }
     [IniField("SERVER", "TC_ALLOWED")] public byte TractionControlAllowed { get; init; }
     [IniField("SERVER", "ABS_ALLOWED")] public byte ABSAllowed { get; init; }
     [IniField("SERVER", "ALLOWED_TYRES_OUT")] public short AllowedTyresOutCount { get; init; }
@@ -39,7 +39,7 @@ public class ServerConfiguration
     [IniField("SERVER", "RACE_PIT_WINDOW_END")] public short PitWindowEnd { get; init; }
     [IniField("SERVER", "STABILITY_ALLOWED")] public bool StabilityAllowed { get; init; }
     [IniField("SERVER", "RACE_OVER_TIME")] public int RaceOverTime { get; init; }
-    [IniField("SERVER", "RESULT_SCREEN_TIME")] public int ResultScreenTime { get; init; } = 1;
+    [IniField("SERVER", "RESULT_SCREEN_TIME")] public int ResultScreenTime { get; init; }
     [IniField("SERVER", "TYRE_WEAR_RATE", Percent = true)] public float TyreConsumptionRate { get; init; }
     [IniField("SERVER", "MAX_CONTACTS_PER_KM", IgnoreParsingErrors = true)] public byte MaxContactsPerKm { get; init; }
     [IniField("SERVER", "LEGAL_TYRES")] public string LegalTyres { get; init; } = "";

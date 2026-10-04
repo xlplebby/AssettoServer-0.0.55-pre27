@@ -1,14 +1,15 @@
 ﻿using System;
 using AssettoServer.Network.Tcp;
 using AssettoServer.Server;
+using AssettoServer.Shared.Network.Packets.Shared;
 
 namespace AssettoServer.Commands.Contexts;
 
 public class ChatCommandContext(
         ACTcpClient client,
-        EntryCarManager entryCarManager,
+        EntryCarManager entryEntryCarManager,
         IServiceProvider? serviceProvider = null)
-    : BaseCommandContext(entryCarManager, serviceProvider)
+    : BaseCommandContext(entryEntryCarManager, serviceProvider)
 {
     public ACTcpClient Client { get; } = client;
 

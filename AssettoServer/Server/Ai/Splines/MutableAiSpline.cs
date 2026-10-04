@@ -13,7 +13,7 @@ public class MutableAiSpline
 {
     public Dictionary<string, FastLane> Splines { get; }
     public SplinePoint[] Points { get; }
-    public List<SplineJunction> Junctions { get; } = [];
+    public List<SplineJunction> Junctions { get; } = new();
     public KDTree<int> KdTree { get; }
     public List<int[]> Lanes { get; }
 
@@ -72,7 +72,13 @@ public class MutableAiSpline
 
     private Vector3[] CreateTreeData()
     {
-        return Points.Select(point => point.Position).ToArray();
+        var data = new List<Vector3>();
+        foreach (var point in Points)
+        {
+            data.Add(point.Position);
+        }
+
+        return data.ToArray();
     }
 
     private ref SplinePoint GetByIdentifier(string identifier)

@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -7,10 +6,10 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using AssettoServer.Server.Configuration;
+using AssettoServer.Shared.Services;
 using AssettoServer.Utils;
 using Autofac.Extensions.DependencyInjection;
 using CommandLine;
-using DotNext.Collections.Generic;
 using FluentValidation;
 using JetBrains.Annotations;
 using Microsoft.AspNetCore.Connections;
@@ -104,6 +103,7 @@ public static class Program
         Logging.CreateLogger(logPrefix, IsContentManager, options.Preset, options.UseVerboseLogging);
         
         AppDomain.CurrentDomain.UnhandledException += UnhandledException;
+        CriticalBackgroundService.UnhandledException += UnhandledException;
         Log.Information("AssettoServer {Version}", ThisAssembly.AssemblyInformationalVersion);
         if (IsContentManager)
         {
@@ -167,7 +167,7 @@ public static class Program
 
             string logPrefix = string.IsNullOrEmpty(preset) ? "log" : preset;
             Logging.CreateLogger(logPrefix, IsContentManager, preset, useVerboseLogging, config.Extra.RedactIpAddresses, config.Extra.LokiSettings);
-
+            
             if (!string.IsNullOrEmpty(preset))
             {
                 Log.Information("Using preset {Preset}", preset);
@@ -179,53 +179,29 @@ public static class Program
                 .ConfigureAppConfiguration(builder => { builder.Sources.Clear(); })
                 .ConfigureWebHostDefaults(webHostBuilder =>
                 {
-                    webHostBuilder.ConfigureKestrel(o => o.ConfigureEndpointDefaults(lo =>
-                            lo.ApplicationServices
-                                .GetServices<Func<ConnectionDelegate, ConnectionDelegate>>()
-                                .ForEach(m => lo.Use(m))))
+                    webHostBuilder.ConfigureKestrel(serverOptions =>
+                        {
+                            serverOptions.AllowSynchronousIO = true;
+                            serverOptions.ConfigureEndpointDefaults(lo =>
+                            {
+                                var middlewares = lo.ApplicationServices.GetServices<Func<ConnectionDelegate, ConnectionDelegate>>();
+                                foreach (var middleware in middlewares)
+                                {
+                                    lo.Use(middleware);
+                                }
+                            });
+                        })
                         .UseStartup(_ => new Startup(config))
                         .UseUrls($"http://0.0.0.0:{config.Server.HttpPort}");
                 })
                 .Build();
-
-            var applicationLifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
-            var stoppedRegistration = applicationLifetime.ApplicationStopped
-                .Register(() => OnApplicationStopped(applicationLifetime, host.Services.GetServices<IHostedService>()));
-
+            
             await host.RunAsync(token);
-            await stoppedRegistration.DisposeAsync();
         }
         catch (Exception ex)
         {
             CrashReportHelper.HandleFatalException(ex);
         }
-    }
-    
-    private static void OnApplicationStopped(IHostApplicationLifetime applicationLifetime, IEnumerable<IHostedService> services)
-    {
-        var exceptions = new List<Exception>();
-        foreach (var service in services)
-        {
-            if (service is not BackgroundService backgroundService) continue;
-            var backgroundTask = backgroundService.ExecuteTask;
-            if (backgroundTask == null) continue;
-            var aggregateException = backgroundTask.Exception;
-            if (aggregateException == null) continue;
-            
-            if (applicationLifetime.ApplicationStopping.IsCancellationRequested
-                && backgroundTask.IsCanceled
-                && aggregateException.InnerExceptions.All(e => e is TaskCanceledException))
-            {
-                continue;
-            }
-            
-            exceptions.AddRange(aggregateException.InnerExceptions);
-        }
-        
-        if (exceptions.Count == 0) return;
-        
-        var exception = exceptions.Count == 1 ? exceptions[0] : new AggregateException(exceptions);
-        CrashReportHelper.HandleFatalException(exception);
     }
 
     private static void UnhandledException(object sender, UnhandledExceptionEventArgs args)
@@ -267,18 +243,14 @@ public static class Program
 
     private static void DetectContentManager()
     {
-        if (!OperatingSystem.IsWindows()) return;
-        
         try
         {
-            var parentId = Process.GetCurrentProcess().ParentProcessId;
+            var parentId = Process.GetCurrentProcess().GetParentProcessId();
             IsContentManager = Process.GetProcessById(parentId).ProcessName == "Content Manager";
         }
         catch (Exception)
         {
-            #if DEBUG
-            throw;
-            #endif
+            // ignored
         }
     }
 }

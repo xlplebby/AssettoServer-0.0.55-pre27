@@ -6,11 +6,11 @@ using AssettoServer.Server;
 namespace AssettoServer.Commands.Contexts;
 
 public class RconCommandContext(
-        EntryCarManager entryCarManager,
+        EntryCarManager entryEntryCarManager,
         RconClient rconClient,
         int rconRequestId,
         IServiceProvider? serviceProvider = null)
-    : BaseCommandContext(entryCarManager, serviceProvider)
+    : BaseCommandContext(entryEntryCarManager, serviceProvider)
 {
     public RconClient RconClient { get; } = rconClient;
     public int RconRequestId { get; } = rconRequestId;

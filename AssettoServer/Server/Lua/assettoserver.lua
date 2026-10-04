@@ -1,5 +1,5 @@
 local license = [[
-Copyright (C) 2026 Niewiarowski, compujuckel
+Copyright (C)  2025 Niewiarowski, compujuckel
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 
@@ -68,6 +68,7 @@ local teleportCarEvent = ac.OnlineEvent({
     position = ac.StructItem.vec3(),
     direction = ac.StructItem.vec3(),
     velocity = ac.StructItem.vec3(),
+    target = ac.StructItem.byte()
 }, function (sender, message)
     if sender ~= nil then return end
     ac.debug("teleport_car_position", message.position)

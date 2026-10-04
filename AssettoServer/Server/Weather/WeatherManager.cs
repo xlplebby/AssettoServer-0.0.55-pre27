@@ -5,6 +5,7 @@ using AssettoServer.Network.Tcp;
 using AssettoServer.Server.Configuration;
 using AssettoServer.Server.TrackParams;
 using AssettoServer.Server.Weather.Implementation;
+using AssettoServer.Shared.Services;
 using AssettoServer.Shared.Weather;
 using Microsoft.Extensions.Hosting;
 using NodaTime;
@@ -15,7 +16,7 @@ using SunCalcNet.Model;
 
 namespace AssettoServer.Server.Weather;
 
-public class WeatherManager : BackgroundService, IHostedLifecycleService
+public class WeatherManager : CriticalBackgroundService
 {
     private readonly ACServerConfiguration _configuration;
     private readonly IWeatherImplementation _weatherImplementation;
@@ -31,7 +32,8 @@ public class WeatherManager : BackgroundService, IHostedLifecycleService
         ACServerConfiguration configuration, 
         SessionManager timeSource, 
         RainHelper rainHelper,
-        CSPServerExtraOptions cspServerExtraOptions)
+        CSPServerExtraOptions cspServerExtraOptions,
+        IHostApplicationLifetime applicationLifetime) : base(applicationLifetime)
     {
         _weatherImplementation = weatherImplementation;
         _weatherTypeProvider = weatherTypeProvider;
@@ -45,17 +47,16 @@ public class WeatherManager : BackgroundService, IHostedLifecycleService
     public TrackParams.TrackParams? TrackParams { get; private set; }
     public WeatherData CurrentWeather { get; private set; } = new(new WeatherType(), new WeatherType());
 
+    private ZonedDateTime _currentDateTime;
     public ZonedDateTime CurrentDateTime
     {
-        get;
+        get => _currentDateTime;
         set
         {
-            field = value;
+            _currentDateTime = value;
             UpdateSunPosition();
         }
     }
-
-    private Instant _startDate;
 
     public SunPosition? CurrentSunPosition { get; private set; }
 
@@ -100,7 +101,7 @@ public class WeatherManager : BackgroundService, IHostedLifecycleService
             
         var weatherConfiguration = _configuration.Server.Weathers[id];
 
-        _startDate = weatherConfiguration.WeatherFxParams.StartDate.HasValue
+        var startDate = weatherConfiguration.WeatherFxParams.StartDate.HasValue
             ? Instant.FromUnixTimeSeconds(weatherConfiguration.WeatherFxParams.StartDate.Value)
             : SystemClock.Instance.GetCurrentInstant();
 
@@ -108,7 +109,7 @@ public class WeatherManager : BackgroundService, IHostedLifecycleService
             ? LocalTime.FromSecondsSinceMidnight(weatherConfiguration.WeatherFxParams.StartTime.Value)
             : CurrentDateTime.TimeOfDay;
         
-        CurrentDateTime = startTime.On(_startDate.InUtc().Date).InZoneLeniently(CurrentDateTime.Zone);
+        CurrentDateTime = startTime.On(startDate.InUtc().Date).InZoneLeniently(CurrentDateTime.Zone);
         if (weatherConfiguration.WeatherFxParams.TimeMultiplier.HasValue)
         {
             _configuration.Server.TimeOfDayMultiplier = (float)weatherConfiguration.WeatherFxParams.TimeMultiplier.Value;
@@ -133,64 +134,18 @@ public class WeatherManager : BackgroundService, IHostedLifecycleService
         return true;
     }
 
-    private static float GetFloatWithVariation(float baseValue, float variation)
+    private float GetFloatWithVariation(float baseValue, float variation)
     {
         return GetRandomFloatInRange(baseValue - variation / 2, baseValue + variation / 2);
     }
 
-    private static float GetRandomFloatInRange(float min, float max)
+    private float GetRandomFloatInRange(float min, float max)
     {
         return (float) (Random.Shared.NextDouble() * (max - min) + min);
     }
 
-    protected override async Task ExecuteAsync(CancellationToken token)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var lastTimeUpdate = _timeSource.ServerTimeMilliseconds;
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
-        
-        while (await timer.WaitForNextTickAsync(token))
-        {
-            try
-            {
-                if (_configuration.Extra.EnableRealTime)
-                {
-                    CurrentDateTime = SystemClock.Instance
-                        .InZone(CurrentDateTime.Zone)
-                        .GetCurrentZonedDateTime();
-                }
-                else
-                {
-                    CurrentDateTime += Duration.FromMilliseconds((_timeSource.ServerTimeMilliseconds - lastTimeUpdate) * _configuration.Server.TimeOfDayMultiplier);
-                    
-                    if (_configuration.Extra.LockServerDate)
-                    {
-                        var realDate = _startDate.InZone(CurrentDateTime.Zone).LocalDateTime.Date;
-
-                        if (realDate != CurrentDateTime.Date)
-                        {
-                            CurrentDateTime = realDate
-                                .AtStartOfDayInZone(CurrentDateTime.Zone)
-                                .PlusTicks(CurrentDateTime.TickOfDay);
-                        }
-                    }
-                }
-                
-                _rainHelper.Update(CurrentWeather, _configuration.Server.DynamicTrack.CurrentGrip, _configuration.Extra.RainTrackGripReductionPercent, _timeSource.ServerTimeMilliseconds - lastTimeUpdate);
-                _weatherImplementation.SendWeather(CurrentWeather, CurrentDateTime);
-                lastTimeUpdate = _timeSource.ServerTimeMilliseconds;
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "Error in weather service update");
-            }
-        }
-    }
-
-    public Task StartedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-
-    public async Task StartingAsync(CancellationToken cancellationToken)
-    {
-        await _trackParamsProvider.InitializeAsync();
         TrackParams = _trackParamsProvider.GetParamsForTrack(_configuration.Server.Track);
 
         DateTimeZone? timeZone;
@@ -232,9 +187,52 @@ public class WeatherManager : BackgroundService, IHostedLifecycleService
         
         if (!SetWeatherConfiguration(Random.Shared.Next(_configuration.Server.Weathers.Count)))
             throw new InvalidOperationException("Could not set initial weather configuration");
+
+        await LoopAsync(stoppingToken);
     }
 
-    public Task StoppedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    private async Task LoopAsync(CancellationToken token)
+    {
+        var lastTimeUpdate = _timeSource.ServerTimeMilliseconds;
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        
+        while (await timer.WaitForNextTickAsync(token))
+        {
+            try
+            {
+                if (_configuration.Extra.EnableRealTime)
+                {
+                    CurrentDateTime = SystemClock.Instance
+                        .InZone(CurrentDateTime.Zone)
+                        .GetCurrentZonedDateTime();
+                }
+                else
+                {
+                    CurrentDateTime += Duration.FromMilliseconds((_timeSource.ServerTimeMilliseconds - lastTimeUpdate) * _configuration.Server.TimeOfDayMultiplier);
+                    
+                    if (_configuration.Extra.LockServerDate)
+                    {
+                        var realDate = SystemClock.Instance
+                            .InZone(CurrentDateTime.Zone)
+                            .GetCurrentDate();
 
-    public Task StoppingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+                        if (realDate != CurrentDateTime.Date)
+                        {
+                            CurrentDateTime = realDate
+                                .AtStartOfDayInZone(CurrentDateTime.Zone)
+                                .PlusTicks(CurrentDateTime.TickOfDay);
+                        }
+                    }
+                }
+                
+                _rainHelper.Update(CurrentWeather, _configuration.Server.DynamicTrack.CurrentGrip, _configuration.Extra.RainTrackGripReductionPercent, _timeSource.ServerTimeMilliseconds - lastTimeUpdate);
+                _weatherImplementation.SendWeather(CurrentWeather, CurrentDateTime);
+                lastTimeUpdate = _timeSource.ServerTimeMilliseconds;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Error in weather service update");
+            }
+        }
+    }
 }

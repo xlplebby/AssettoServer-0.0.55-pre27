@@ -1,0 +1,5 @@
+D:\Code Stuff\NameColorAndIcons\out-linux-x64\libsteam_api.so
+D:\Code Stuff\NameColorAndIcons\out-linux-x64\steam_appid.txt
+D:\Code Stuff\NameColorAndIcons\out-linux-x64\libcsp_xxhash3.so
+D:\Code Stuff\NameColorAndIcons\out-linux-x64\wwwroot\README.txt
+D:\Code Stuff\NameColorAndIcons\out-linux-x64\AssettoServer

@@ -5,10 +5,11 @@ using System.IO;
 using System.Numerics;
 using System.Reflection;
 using System.Text;
+using AssettoServer.Server;
 using AssettoServer.Shared.Network.Packets;
 using AssettoServer.Shared.Network.Packets.Shared;
 using AssettoServer.Shared.Utils;
-using AssettoServer.Utils;
+using AssettoServer.Vendor.CSPXxHash3;
 using Serilog;
 using Sigil;
 
@@ -23,7 +24,7 @@ internal static class OnlineEventGenerator
         { typeof(sbyte), "char" },
         { typeof(ushort), "uint16_t" },
         { typeof(short), "int16_t" },
-        { typeof(uint), "uint32_t" },
+        { typeof(uint), "uint" },
         { typeof(int), "int" },
         { typeof(ulong), "uint64_t" },
         { typeof(long), "int64_t" },
@@ -48,7 +49,7 @@ internal static class OnlineEventGenerator
             }
         }
 
-        var hash = CSPXxHash3.Hash64(stream.GetSpan());
+        var hash = CSPXxHash3.Hash64(stream.ToArray());
         return (uint)hash ^ (uint)(hash >> 32);
     }
 

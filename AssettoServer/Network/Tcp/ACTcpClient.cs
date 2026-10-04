@@ -279,7 +279,7 @@ public class ACTcpClient : IClient
         }
     }
 
-    public void SendPacketUdp<TPacket>(in TPacket packet) where TPacket : IOutgoingNetworkPacket, allows ref struct
+    public void SendPacketUdp<TPacket>(in TPacket packet) where TPacket : IOutgoingNetworkPacket
     {
         if (UdpEndpoint == null) return;
 
@@ -635,20 +635,19 @@ public class ACTcpClient : IClient
     private void OnChecksum(PacketReader reader)
     {
         var allChecksums = _checksumManager.GetChecksumsForHandshake(EntryCar.Model);
-        var checksumsLength = MD5.HashSizeInBytes * (allChecksums.Count + 1);
         bool passedChecksum = false;
-
-        var packet = reader.ReadPacket<ChecksumPacket>();
-        if (packet.Checksum.Length == checksumsLength)
+        byte[] fullChecksum = new byte[MD5.HashSizeInBytes * (allChecksums.Count + 1)];
+        if (reader.Buffer.Length == fullChecksum.Length + 1)
         {
-            CarChecksum = packet.Checksum.AsSpan(packet.Checksum.Length - MD5.HashSizeInBytes).ToArray();
+            reader.ReadBytes(fullChecksum);
+            CarChecksum = fullChecksum.AsSpan(fullChecksum.Length - MD5.HashSizeInBytes).ToArray();
             passedChecksum = !_checksumManager.CarChecksums.TryGetValue(EntryCar.Model, out var modelChecksums)
                              || modelChecksums.Count == 0
                              || modelChecksums.Any(c => CarChecksum.AsSpan().SequenceEqual(c.Value));
 
             for (int i = 0; i < allChecksums.Count; i++)
             {
-                if (!allChecksums[i].Value.AsSpan().SequenceEqual(packet.Checksum.AsSpan(i * MD5.HashSizeInBytes, MD5.HashSizeInBytes)))
+                if (!allChecksums[i].Value.AsSpan().SequenceEqual(fullChecksum.AsSpan(i * MD5.HashSizeInBytes, MD5.HashSizeInBytes)))
                 {
                     Logger.Information("{ClientName} failed checksum for file {ChecksumFile}", Name, allChecksums[i].Key);
                     passedChecksum = false;
@@ -986,7 +985,7 @@ public class ACTcpClient : IClient
             }
 
             OutgoingPacketChannel.Writer.TryComplete();
-            await SendLoopTask.WaitAsync(TimeSpan.FromSeconds(2));
+            _ = await Task.WhenAny(Task.Delay(2000), SendLoopTask);
 
             try
             {
@@ -1013,6 +1012,7 @@ public class ACTcpClient : IClient
             Position = position,
             Direction = direction,
             Velocity = velocity,
+            Target = SessionId
         });
     }
 

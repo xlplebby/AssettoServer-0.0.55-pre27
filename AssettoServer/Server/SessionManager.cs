@@ -11,19 +11,19 @@ using AssettoServer.Server.Weather;
 using AssettoServer.Shared.Model;
 using AssettoServer.Shared.Network.Packets.Incoming;
 using AssettoServer.Shared.Network.Packets.Outgoing;
+using AssettoServer.Shared.Services;
 using Microsoft.Extensions.Hosting;
 using Serilog;
 
 namespace AssettoServer.Server;
 
-public class SessionManager : BackgroundService, IHostedLifecycleService
+public class SessionManager : CriticalBackgroundService
 {
     private readonly ACServerConfiguration _configuration;
     private readonly Func<SessionConfiguration, SessionState> _sessionStateFactory;
     private readonly Stopwatch _timeSource = new();
     private readonly EntryCarManager _entryCarManager;
     private readonly Lazy<WeatherManager> _weatherManager;
-    private readonly IHostApplicationLifetime _applicationLifetime;
 
     public int CurrentSessionIndex { get; private set; } = -1;
     public bool IsLastRaceInverted { get; private set; } = false;
@@ -48,18 +48,24 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
         Func<SessionConfiguration, SessionState> sessionStateFactory,
         EntryCarManager entryCarManager,
         Lazy<WeatherManager> weatherManager,
-        IHostApplicationLifetime applicationLifetime)
+        IHostApplicationLifetime applicationLifetime) : base(applicationLifetime)
     {
         _configuration = configuration;
         _sessionStateFactory = sessionStateFactory;
         _entryCarManager = entryCarManager;
         _weatherManager = weatherManager;
-        _applicationLifetime = applicationLifetime;
 
         _entryCarManager.ClientConnected += OnClientConnected;
     }
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        _timeSource.Start();
+        NextSession();
 
-    protected override async Task ExecuteAsync(CancellationToken token)
+        await LoopAsync(stoppingToken);
+    }
+
+    private async Task LoopAsync(CancellationToken token)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(100));
 
@@ -266,30 +272,39 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
             return CurrentSession.TimeLeftMilliseconds == 0;
         }
 
-        if (CurrentSession.Configuration.Type is SessionType.Practice or SessionType.Qualifying)
+        if (ServerTimeMilliseconds <= CurrentSession.StartTimeMilliseconds)
         {
             return false;
         }
 
-        var connectedCount = _entryCarManager.ConnectedCars.Count;
-        
-        switch (CurrentSession.Configuration.IsOpen)
+        var connectedCount = _entryCarManager.EntryCars.Count(e => e.Client != null);
+
+        if (CurrentSession.Configuration.Type != SessionType.Race)
         {
-            case IsOpenMode.Closed when connectedCount < 2:
-                Log.Information("Skipping race session: didn't reach minimum player count before cutoff ({PlayerCount}/2). Use 'IS_OPEN=1' to allow joining during the race", connectedCount);
-                return true;
-            case IsOpenMode.Closed:
-                return false;
-            case IsOpenMode.CloseAtStart when connectedCount >= 2 ||
-                                              ServerTimeMilliseconds <= CurrentSession.StartTimeMilliseconds:
-                return false;
-            case IsOpenMode.Open when connectedCount > 0 ||
-                                      ServerTimeMilliseconds <= CurrentSession.StartTimeMilliseconds:
-                return false;
+            return false;
+        }
+
+        if (CurrentSession.Configuration.IsOpen == IsOpenMode.Closed && connectedCount < 2)
+        {
+            Log.Information("Skipping race session: didn't reach minimum player count before cutoff ({PlayerCount}/2). Use 'IS_OPEN=1' to allow joining during the race", connectedCount);
+            return true;
+        }
+
+        if (CurrentSession.Configuration.IsOpen != IsOpenMode.CloseAtStart)
+        {
+            if (connectedCount > 0) return false;
+            
+            Log.Information("Skipping race session: no player connected");
+            return true;
+        }
+
+        if (connectedCount < 2 && CurrentSession.IsCutoffReached)
+        {
+            Log.Information("Skipping race session: didn't reach minimum player count before cutoff ({PlayerCount}/2). Use 'IS_OPEN=1' to allow joining during the race", connectedCount);
+            return true;
         }
         
-        Log.Information("Skipping race session: no player connected");
-        return true;
+        return false;
     }
 
     private void CalcOverTime()
@@ -337,7 +352,7 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
     {
         var currentResult = CurrentSession.Results;
         
-        if (currentResult != null && currentResult[client.SessionId].Guid != client.Guid)
+        if (currentResult != null)
         {
             currentResult[client.SessionId] = new EntryCarResult(client);
         }    
@@ -424,6 +439,7 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
         if (_entryCarManager.EntryCars.Any(c => c.Client is { HasSentFirstUpdate: false }))
             return false;
 
+
         SetSession(CurrentSessionIndex);
         return true;
     }
@@ -443,9 +459,7 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
             }
             else if (CurrentSession.Configuration.Type != SessionType.Race || _configuration.Server.InvertedGridPositions == 0 || IsLastRaceInverted)
             {
-                Log.Information("Set LOOP_MODE=1 in the server_cfg.ini to loop sessions");
-                _applicationLifetime.StopApplication();
-                return false;
+                // TODO exit
             }
 
             if (CurrentSession.Configuration.Type == SessionType.Race && _configuration.Server.InvertedGridPositions != 0)
@@ -525,18 +539,4 @@ public class SessionManager : BackgroundService, IHostedLifecycleService
         CurrentSession.HasSentRaceOverPacket = true;
         CurrentSession.OverTimeMilliseconds = ServerTimeMilliseconds;
     }
-
-    public Task StartedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-
-    public Task StartingAsync(CancellationToken cancellationToken)
-    {
-        _timeSource.Start();
-        NextSession();
-        
-        return Task.CompletedTask;
-    }
-
-    public Task StoppedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-
-    public Task StoppingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }

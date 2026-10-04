@@ -6,19 +6,22 @@ using System.Threading;
 using System.Threading.Tasks;
 using AssettoServer.Network.Tcp;
 using AssettoServer.Server.Configuration;
+using AssettoServer.Shared.Services;
 using Microsoft.Extensions.Hosting;
 using Serilog;
 using Steamworks;
 
 namespace AssettoServer.Server.Steam;
 
-public class NativeSteam : BackgroundService, ISteam
+public class NativeSteam : CriticalBackgroundService, ISteam
 {
     private readonly ACServerConfiguration _configuration;
+    // native Steamworks calls are not safe for concurrent multi-threaded access; serialize them all
+    private static readonly object SteamLock = new();
 
     private bool _firstRun = true;
     
-    public NativeSteam(ACServerConfiguration configuration)
+    public NativeSteam(ACServerConfiguration configuration, IHostApplicationLifetime lifetime) : base(lifetime)
     {
         _configuration = configuration;
     }
@@ -31,27 +34,29 @@ public class NativeSteam : BackgroundService, ISteam
             Secure = true,
         }.WithQueryShareGamePort();
 
-        try
+        lock (SteamLock)
         {
-            SteamServer.Init(ISteam.AppId, serverInit);
-        }
-        catch (Exception ex)
-        {
-            if (_firstRun) throw;
-            Log.Error(ex, "Error trying to initialize SteamServer");
-        }
+            try
+            {
+                SteamServer.Init(ISteam.AppId, serverInit);
+            }
+            catch
+            {
+                // ignored
+            }
 
-        try
-        {
-            SteamServer.LogOnAnonymous();
-            SteamServer.OnSteamServersDisconnected += SteamServer_OnSteamServersDisconnected;
-            SteamServer.OnSteamServersConnected += SteamServer_OnSteamServersConnected;
-            SteamServer.OnSteamServerConnectFailure += SteamServer_OnSteamServerConnectFailure;
-        }
-        catch (Exception ex)
-        {
-            if (_firstRun) throw;
-            Log.Error(ex, "Error trying to initialize SteamServer");
+            try
+            {
+                SteamServer.LogOnAnonymous();
+                SteamServer.OnSteamServersDisconnected += SteamServer_OnSteamServersDisconnected;
+                SteamServer.OnSteamServersConnected += SteamServer_OnSteamServersConnected;
+                SteamServer.OnSteamServerConnectFailure += SteamServer_OnSteamServerConnectFailure;
+            }
+            catch (Exception ex)
+            {
+                if (_firstRun) throw;
+                Log.Error(ex, "Error trying to initialize SteamServer");
+            }
         }
 
         _firstRun = false;
@@ -59,13 +64,16 @@ public class NativeSteam : BackgroundService, ISteam
 
     internal void HandleIncomingPacket(byte[] data, IPEndPoint endpoint)
     {
-        SteamServer.HandleIncomingPacket(data, data.Length, endpoint.Address.IpToInt32(), (ushort)endpoint.Port);
-
-        while (SteamServer.GetOutgoingPacket(out var packet))
+        lock (SteamLock)
         {
-            var dstEndpoint = new IPEndPoint((uint)IPAddress.HostToNetworkOrder((int)packet.Address), packet.Port);
-            Log.Debug("Outgoing steam packet to {Endpoint}", dstEndpoint);
-            //_server.UdpServer.Send(dstEndpoint, packet.Data, 0, packet.Size); TODO
+            SteamServer.HandleIncomingPacket(data, data.Length, endpoint.Address.IpToInt32(), (ushort)endpoint.Port);
+
+            while (SteamServer.GetOutgoingPacket(out var packet))
+            {
+                var dstEndpoint = new IPEndPoint((uint)IPAddress.HostToNetworkOrder((int)packet.Address), packet.Port);
+                Log.Debug("Outgoing steam packet to {Endpoint}", dstEndpoint);
+                //_server.UdpServer.Send(dstEndpoint, packet.Data, 0, packet.Size); TODO
+            }
         }
     }
     
@@ -77,7 +85,13 @@ public class NativeSteam : BackgroundService, ISteam
         SteamServer.OnValidateAuthTicketResponse += TicketValidateResponse;
         try
         {
-            if (!SteamServer.BeginAuthSession(sessionTicket, guid))
+            bool sessionStarted;
+            lock (SteamLock)
+            {
+                sessionStarted = SteamServer.BeginAuthSession(sessionTicket, guid);
+            }
+
+            if (!sessionStarted)
             {
                 return new SteamResult { ErrorReason = "Could not begin auth session" };
             }
@@ -115,7 +129,13 @@ public class NativeSteam : BackgroundService, ISteam
 
             foreach (int appid in _configuration.Extra.ValidateDlcOwnership)
             {
-                if (SteamServer.UserHasLicenseForApp(playerSteamId, appid) != UserHasLicenseForAppResult.HasLicense)
+                UserHasLicenseForAppResult license;
+                lock (SteamLock)
+                {
+                    license = SteamServer.UserHasLicenseForApp(playerSteamId, appid);
+                }
+
+                if (license != UserHasLicenseForAppResult.HasLicense)
                 {
                     taskCompletionSource.SetResult(new SteamResult { ErrorReason = $"Required DLC {appid} missing" });
                     return;
@@ -135,7 +155,10 @@ public class NativeSteam : BackgroundService, ISteam
     {
         try
         {
-            SteamServer.EndSession(sender.Guid);
+            lock (SteamLock)
+            {
+                SteamServer.EndSession(sender.Guid);
+            }
         }
         catch (Exception ex)
         {
@@ -155,22 +178,25 @@ public class NativeSteam : BackgroundService, ISteam
         SteamServer.OnSteamServersDisconnected -= SteamServer_OnSteamServersDisconnected;
         SteamServer.OnSteamServerConnectFailure -= SteamServer_OnSteamServerConnectFailure;
 
-        try
+        lock (SteamLock)
         {
-            SteamServer.LogOff();
-        }
-        catch
-        {
-            // ignored
-        }
+            try
+            {
+                SteamServer.LogOff();
+            }
+            catch
+            {
+                // ignored
+            }
 
-        try
-        {
-            SteamServer.Shutdown();
-        }
-        catch
-        {
-            // ignored
+            try
+            {
+                SteamServer.Shutdown();
+            }
+            catch
+            {
+                // ignored
+            }
         }
 
         Initialize();
@@ -184,11 +210,6 @@ public class NativeSteam : BackgroundService, ISteam
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await Task.Run(Initialize, stoppingToken);
-        await Task.Delay(Timeout.Infinite, stoppingToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-        
-        SteamServer.OnSteamServersConnected -= SteamServer_OnSteamServersConnected;
-        SteamServer.OnSteamServersDisconnected -= SteamServer_OnSteamServersDisconnected;
-        SteamServer.OnSteamServerConnectFailure -= SteamServer_OnSteamServerConnectFailure;
     }
 }
 

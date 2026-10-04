@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using AssettoServer.Server;
@@ -98,22 +97,17 @@ public class HttpController : ControllerBase
         bool guidValid = ulong.TryParse(guid, out ulong ulongGuid);
         bool isAdmin = guidValid && await _adminService.IsAdminAsync(ulongGuid);
 
-        var cars = new List<EntryListResponseCar>(_entryCarManager.EntryCars.Length);
-        foreach (var ec in _entryCarManager.EntryCars)
+        EntryListResponse responseObj = new EntryListResponse
         {
-            cars.Add(new EntryListResponseCar
+            Cars = _entryCarManager.EntryCars.Select(ec => new EntryListResponseCar
             {
                 Model = ec.Model,
                 Skin = ec.Skin,
-                IsEntryList = isAdmin || await _openSlotFilter.IsSlotOpen(ec, ulongGuid),
+                IsEntryList = isAdmin || _openSlotFilter.IsSlotOpen(ec, ulongGuid),
                 DriverName = ec.Client?.Name,
                 DriverTeam = ec.Client?.Team,
                 IsConnected = ec.Client != null
-            });
-        }
-        EntryListResponse responseObj = new EntryListResponse
-        {
-            Cars = cars,
+            }),
             Features = _cspFeatureManager.Features.Keys
         };
 
@@ -126,22 +120,6 @@ public class HttpController : ControllerBase
     {
         bool guidValid = ulong.TryParse(guid, out ulong ulongGuid);
         bool isAdmin = guidValid && await _adminService.IsAdminAsync(ulongGuid);
-        
-        var cars = new List<DetailResponseCar>(_entryCarManager.EntryCars.Length);
-        foreach (var ec in _entryCarManager.EntryCars)
-        {
-            cars.Add(new DetailResponseCar
-            {
-                Model = ec.Model,
-                Skin = ec.Skin,
-                IsEntryList = isAdmin || await _openSlotFilter.IsSlotOpen(ec, ulongGuid),
-                DriverName = ec.Client?.Name,
-                DriverTeam = ec.Client?.Team,
-                DriverNation = ec.Client?.NationCode,
-                IsConnected = ec.Client != null,
-                ID = ec.Client?.HashedGuid
-            });
-        }
         
         DetailResponse responseObj = new DetailResponse
         {
@@ -170,7 +148,20 @@ public class HttpController : ControllerBase
             LoadingImageUrl = _configuration.Extra.LoadingImageUrls is { Count: > 0 }
                 ? _configuration.Extra.LoadingImageUrls[Random.Shared.Next(0, _configuration.Extra.LoadingImageUrls.Count)]
                 : null,
-            Players = new DetailResponsePlayerList { Cars = cars },
+            Players = new DetailResponsePlayerList
+            {
+                Cars = _entryCarManager.EntryCars.Select(ec => new DetailResponseCar
+                {
+                    Model = ec.Model,
+                    Skin = ec.Skin,
+                    IsEntryList = isAdmin || _openSlotFilter.IsSlotOpen(ec, ulongGuid),
+                    DriverName = ec.Client?.Name,
+                    DriverTeam = ec.Client?.Team,
+                    DriverNation = ec.Client?.NationCode,
+                    IsConnected = ec.Client != null,
+                    ID = ec.Client?.HashedGuid
+                })
+            },
             Until = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + _sessionManager.CurrentSession.TimeLeftMilliseconds / 1000,
             Content = await _contentProvider.GetContentAsync(ulongGuid),
             TrackBase = _configuration.Server.Track,

@@ -1,0 +1,2 @@
+d:\Code Stuff\ClubhousePlugin\out-win-x64\wwwroot\README.txt
+d:\Code Stuff\ClubhousePlugin\out-win-x64\AssettoServer.exe

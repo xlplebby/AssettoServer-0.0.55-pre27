@@ -36,6 +36,7 @@ internal static class Logging
                     Login = lokiSettings.Login!,
                     Password = lokiSettings.Password!
                 },
+                useInternalTimestamp: true,
                 textFormatter: new LokiJsonTextFormatter(),
                 propertiesAsLabels: ["MachineName", "Preset"])
             .CreateLogger();
@@ -48,9 +49,7 @@ internal static class Logging
                 LogEventLevel.Warning)
             .MinimumLevel.Override("AspNetCore.Authentication.ApiKey.ApiKeyInHeaderHandler", LogEventLevel.Information)
             .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
-            .MinimumLevel.Override("Grpc", LogEventLevel.Warning)
-            // We do our own logging for these exceptions. The default Microsoft log statements are a bit too confusing for users
-            .Filter.ByExcluding("EventId.Name = 'HostedServiceStartupFaulted' or EventId.Name = 'BackgroundServiceFaulted' or EventId.Name = 'BackgroundServiceStoppingHost'");
+            .MinimumLevel.Override("Grpc", LogEventLevel.Warning);
 
         if (redactIpAddresses)
         {

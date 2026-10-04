@@ -21,16 +21,34 @@ public class AiSplineWriter
             NumJunctions = map.Junctions.Count,
             NumKdTreePoints = treePoints.Length
         });
+
+        for (int i = 0; i < map.Points.Length; i++)
+        {
+            file.Write(in map.Points[i]);
+        }
+
+        for (int i = 0; i < map.Junctions.Count; i++)
+        {
+            file.Write(map.Junctions[i]);
+        }
+
+        for (int i = 0; i < treePoints.Length; i++)
+        {
+            file.Write(in treePoints[i]);
+        }
         
-        file.Write(map.Points);
-        file.Write(map.Junctions);
-        file.Write(treePoints);
-        file.Write(treeNodes);
+        for (int i = 0; i < treeNodes.Length; i++)
+        {
+            file.Write(in treeNodes[i]);
+        }
 
         foreach (var lanes in map.Lanes)
         {
             file.Write(lanes.Length);
-            file.Write(lanes);
+            for (int i = 0; i < lanes.Length; i++)
+            {
+                file.Write(in lanes[i]);
+            }
         }
     }
 }

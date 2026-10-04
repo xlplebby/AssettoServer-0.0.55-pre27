@@ -1,5 +1,5 @@
 ﻿using System;
-using AssettoServer.Shared.Utils;
+using AssettoServer.Utils;
 
 namespace AssettoServer.Server.Weather;
 

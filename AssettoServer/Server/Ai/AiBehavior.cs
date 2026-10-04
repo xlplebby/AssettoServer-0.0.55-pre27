@@ -9,7 +9,9 @@ using AssettoServer.Network.Http;
 using AssettoServer.Network.Tcp;
 using AssettoServer.Server.Ai.Splines;
 using AssettoServer.Server.Configuration;
+using AssettoServer.Server.Plugin;
 using AssettoServer.Shared.Network.Packets.Outgoing;
+using AssettoServer.Shared.Services;
 using AssettoServer.Utils;
 using Microsoft.Extensions.Hosting;
 using Prometheus;
@@ -17,30 +19,29 @@ using Serilog;
 
 namespace AssettoServer.Server.Ai;
 
-public class AiBehavior : BackgroundService
+public class AiBehavior : CriticalBackgroundService, IAssettoServerAutostart
 {
     private readonly ACServerConfiguration _configuration;
     private readonly SessionManager _sessionManager;
     private readonly EntryCarManager _entryCarManager;
     private readonly AiSpline _spline;
     private readonly HttpInfoCache _httpInfoCache;
+    //private readonly EntryCar.Factory _entryCarFactory;
 
     private readonly JunctionEvaluator _junctionEvaluator;
 
     private readonly Gauge _aiStateCountMetric = Metrics.CreateGauge("assettoserver_aistatecount", "Number of AI states");
-    private readonly Summary _updateDurationTimer = Metrics.CreateSummary("assettoserver_aibehavior_update",
-        "AiBehavior.Update Duration",
-        MetricDefaults.DefaultQuantiles);
-    private readonly Summary _obstacleDetectionDurationTimer = Metrics.CreateSummary("assettoserver_aibehavior_obstacledetection", 
-        "AiBehavior.ObstacleDetection Duration", 
-        MetricDefaults.DefaultQuantiles);
+
+    private readonly Summary _updateDurationTimer;
+    private readonly Summary _obstacleDetectionDurationTimer;
 
     public AiBehavior(SessionManager sessionManager,
         ACServerConfiguration configuration,
         EntryCarManager entryCarManager,
+        IHostApplicationLifetime applicationLifetime,
+        //EntryCar.Factory entryCarFactory,
         CSPServerScriptProvider serverScriptProvider, 
-        AiSpline spline,
-        HttpInfoCache httpInfoCache)
+        AiSpline spline, HttpInfoCache httpInfoCache) : base(applicationLifetime)
     {
         _sessionManager = sessionManager;
         _configuration = configuration;
@@ -48,19 +49,26 @@ public class AiBehavior : BackgroundService
         _spline = spline;
         _httpInfoCache = httpInfoCache;
         _junctionEvaluator = new JunctionEvaluator(spline, false);
+        //_entryCarFactory = entryCarFactory;
 
         if (_configuration.Extra.AiParams.Debug)
         {
-            serverScriptProvider.AddScript(Assembly.GetExecutingAssembly().GetManifestResourceStream("AssettoServer.Server.Ai.ai_debug.lua")!, "ai_debug.lua");
+            using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("AssettoServer.Server.Ai.ai_debug.lua")!;
+            serverScriptProvider.AddScript(stream, "ai_debug.lua");
         }
+
+        _updateDurationTimer = Metrics.CreateSummary("assettoserver_aibehavior_update", "AiBehavior.Update Duration", MetricDefaults.DefaultQuantiles);
+        _obstacleDetectionDurationTimer = Metrics.CreateSummary("assettoserver_aibehavior_obstacledetection", "AiBehavior.ObstacleDetection Duration", MetricDefaults.DefaultQuantiles);
 
         _entryCarManager.ClientConnected += (client, _) =>
         {
             client.ChecksumPassed += OnClientChecksumPassed;
             client.Collision += OnCollision;
         };
+
         _entryCarManager.ClientDisconnected += OnClientDisconnected;
         _configuration.Extra.AiParams.PropertyChanged += (_, _) => AdjustOverbooking();
+
         _sessionManager.SessionChanged += OnSessionChanged;
     }
 
@@ -115,17 +123,21 @@ public class AiBehavior : BackgroundService
 
     private void SendDebugPackets()
     {
-        var sessionIds = new byte[_entryCarManager.EntryCars.Length];
-        var currentSpeeds = new byte[_entryCarManager.EntryCars.Length];
-        var targetSpeeds = new byte[_entryCarManager.EntryCars.Length];
-        var maxSpeeds = new byte[_entryCarManager.EntryCars.Length];
-        var closestAiObstacles = new short[_entryCarManager.EntryCars.Length];
-        
+        CountedArray<byte> sessionIds = new(_entryCarManager.EntryCars.Length);
+        CountedArray<byte> currentSpeeds = new(_entryCarManager.EntryCars.Length);
+        CountedArray<byte> targetSpeeds = new(_entryCarManager.EntryCars.Length);
+        CountedArray<byte> maxSpeeds = new(_entryCarManager.EntryCars.Length);
+        CountedArray<short> closestAiObstacles = new(_entryCarManager.EntryCars.Length);
         foreach (var player in _entryCarManager.ConnectedCars.Values)
         {
             if (player.Client?.HasSentFirstUpdate == false) continue;
 
-            var count = 0;
+            sessionIds.Clear();
+            currentSpeeds.Clear();
+            targetSpeeds.Clear();
+            maxSpeeds.Clear();
+            closestAiObstacles.Clear();
+
             foreach (var car in _entryCarManager.EntryCars)
             {
                 if (!car.AiControlled) continue;
@@ -133,24 +145,23 @@ public class AiBehavior : BackgroundService
                 var (aiState, _) = car.GetClosestAiState(player.Status.Position);
                 if (aiState == null) continue;
 
-                sessionIds[count] = car.SessionId;
-                currentSpeeds[count] = (byte)(aiState.CurrentSpeed * 3.6f);
-                targetSpeeds[count] = (byte)(aiState.TargetSpeed * 3.6f);
-                maxSpeeds[count] = (byte)(aiState.MaxSpeed * 3.6f);
-                closestAiObstacles[count] = (short)aiState.ClosestAiObstacleDistance;
-                count++;
+                sessionIds.Add(car.SessionId);
+                currentSpeeds.Add((byte)(aiState.CurrentSpeed * 3.6f));
+                targetSpeeds.Add((byte)(aiState.TargetSpeed * 3.6f));
+                maxSpeeds.Add((byte)(aiState.MaxSpeed * 3.6f));
+                closestAiObstacles.Add((short)aiState.ClosestAiObstacleDistance);
             }
 
-            for (int i = 0; i < count; i += AiDebugPacket.Length)
+            for (int i = 0; i < sessionIds.Count; i += AiDebugPacket.Length)
             {
                 var packet = new AiDebugPacket();
                 Array.Fill(packet.SessionIds, (byte)255);
 
-                new ArraySegment<byte>(sessionIds, i, Math.Min(AiDebugPacket.Length, count - i)).CopyTo(packet.SessionIds);
-                new ArraySegment<short>(closestAiObstacles, i, Math.Min(AiDebugPacket.Length, count - i)).CopyTo(packet.ClosestAiObstacles);
-                new ArraySegment<byte>(currentSpeeds, i, Math.Min(AiDebugPacket.Length, count - i)).CopyTo(packet.CurrentSpeeds);
-                new ArraySegment<byte>(maxSpeeds, i, Math.Min(AiDebugPacket.Length, count - i)).CopyTo(packet.MaxSpeeds);
-                new ArraySegment<byte>(targetSpeeds, i, Math.Min(AiDebugPacket.Length, count - i)).CopyTo(packet.TargetSpeeds);
+                new ArraySegment<byte>(sessionIds.Array, i, Math.Min(AiDebugPacket.Length, sessionIds.Count - i)).CopyTo(packet.SessionIds);
+                new ArraySegment<short>(closestAiObstacles.Array, i, Math.Min(AiDebugPacket.Length, sessionIds.Count - i)).CopyTo(packet.ClosestAiObstacles);
+                new ArraySegment<byte>(currentSpeeds.Array, i, Math.Min(AiDebugPacket.Length, sessionIds.Count - i)).CopyTo(packet.CurrentSpeeds);
+                new ArraySegment<byte>(maxSpeeds.Array, i, Math.Min(AiDebugPacket.Length, sessionIds.Count - i)).CopyTo(packet.MaxSpeeds);
+                new ArraySegment<byte>(targetSpeeds.Array, i, Math.Min(AiDebugPacket.Length, sessionIds.Count - i)).CopyTo(packet.TargetSpeeds);
 
                 player.Client?.SendPacket(packet);
             }
@@ -476,6 +487,10 @@ public class AiBehavior : BackgroundService
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
         SetHttpDetailsExtensions();
-        return Task.WhenAll(UpdateAsync(stoppingToken), ObstacleDetectionAsync(stoppingToken));
+        
+        _ = UpdateAsync(stoppingToken);
+        _ = ObstacleDetectionAsync(stoppingToken);
+
+        return Task.CompletedTask;
     }
 }

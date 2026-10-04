@@ -49,11 +49,8 @@ public partial class EntryCar
     public int? MaxAiSafetyDistanceMetersSquared { get; set; }
     public List<LaneSpawnBehavior>? AiAllowedLanes { get; set; }
     public float TyreDiameterMeters { get; set; }
-    
-    // Theoretically, this list should never include null values. Since we access it as a Span later, we might catch a null anyway
-    // when it is updated concurrently
-    private readonly List<AiState?> _aiStates = [];
-    private Span<AiState?> AiStatesSpan => CollectionsMarshal.AsSpan(_aiStates);
+    private readonly List<AiState> _aiStates = [];
+    private Span<AiState> AiStatesSpan => CollectionsMarshal.AsSpan(_aiStates);
     
     private readonly Func<EntryCar, AiState> _aiStateFactory;
     private readonly AiSpline? _spline;
@@ -131,12 +128,12 @@ public partial class EntryCar
     {
         foreach (var aiState in AiStatesSpan)
         {
-            if (aiState is not { Initialized: true }) continue;
+            if (!aiState.Initialized) continue;
 
             foreach (var targetAiState in AiStatesSpan)
             {
                 if (aiState != targetAiState
-                    && targetAiState is { Initialized: true }
+                    && targetAiState.Initialized
                     && Vector3.DistanceSquared(aiState.Status.Position, targetAiState.Status.Position) < _configuration.Extra.AiParams.MinStateDistanceSquared
                     && (_configuration.Extra.AiParams.TwoWayTraffic || Vector3.Dot(aiState.Status.Velocity, targetAiState.Status.Velocity) > 0))
                 {
@@ -151,7 +148,7 @@ public partial class EntryCar
     {
         foreach (var aiState in AiStatesSpan)
         {
-            aiState?.Update();
+            aiState.Update();
         }
     }
 
@@ -159,7 +156,7 @@ public partial class EntryCar
     {
         foreach (var aiState in AiStatesSpan)
         {
-            aiState?.DetectObstacles();
+            aiState.DetectObstacles();
         }
     }
 
@@ -170,7 +167,7 @@ public partial class EntryCar
 
         foreach (var aiState in AiStatesSpan)
         {
-            if (aiState is not { Initialized: true }) continue;
+            if (!aiState.Initialized) continue;
 
             float distance = Vector3.DistanceSquared(aiState.Status.Position, playerStatus.Position);
 
@@ -212,7 +209,7 @@ public partial class EntryCar
             
         foreach (var aiState in AiStatesSpan)
         {
-            if (aiState is { Initialized: true }
+            if (aiState.Initialized 
                 && Vector3.DistanceSquared(aiState.Status.Position, ops.Points[pointId].Position) < aiState.SafetyDistanceSquared
                 && ops.IsSameDirection(aiState.CurrentSplinePointId, pointId))
             {
@@ -230,8 +227,6 @@ public partial class EntryCar
         
         foreach (var aiState in AiStatesSpan)
         {
-            if (aiState == null) continue;
-            
             float distanceSquared = Vector3.DistanceSquared(position, aiState.Status.Position);
             if (distanceSquared < minDistanceSquared)
             {
@@ -247,8 +242,6 @@ public partial class EntryCar
     {
         foreach (var aiState in AiStatesSpan)
         {
-            if (aiState == null) continue;
-            
             if (aiState.Initialized)
             {
                 initializedStates.Add(aiState);
@@ -281,7 +274,7 @@ public partial class EntryCar
 
         foreach (var state in AiStatesSpan)
         {
-            if (state == aiState || state is not { Initialized: true }) continue;
+            if (state == aiState || !state.Initialized) continue;
 
             if (Vector3.DistanceSquared(spawnPoint, state.Status.Position) < _configuration.Extra.AiParams.StateSpawnDistanceSquared)
             {
@@ -362,7 +355,7 @@ public partial class EntryCar
     {
         foreach (var state in AiStatesSpan)
         {
-            state?.Despawn();
+            state.Despawn();
         }
         _aiStates.Clear();
         _aiStates.Add(_aiStateFactory(this));

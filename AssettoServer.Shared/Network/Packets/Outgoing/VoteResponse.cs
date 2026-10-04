@@ -1,4 +1,6 @@
-﻿namespace AssettoServer.Shared.Network.Packets.Outgoing;
+﻿using AssettoServer.Shared.Network.Packets.Outgoing;
+
+namespace AssettoServer.Shared.Network.Packets.Outgoing;
 
 public struct VoteResponse : IOutgoingNetworkPacket
 {

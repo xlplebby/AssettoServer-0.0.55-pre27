@@ -8,7 +8,6 @@ using AssettoServer.Server.Configuration.Extra;
 using AssettoServer.Server.Weather;
 using AssettoServer.Shared.Model;
 using AssettoServer.Shared.Network.Packets.Outgoing;
-using AssettoServer.Shared.Utils;
 using AssettoServer.Utils;
 using JPBotelho;
 using Serilog;
@@ -23,15 +22,17 @@ public class AiState : IDisposable
 
     public int CurrentSplinePointId
     {
-        get;
+        get => _currentSplinePointId;
         private set
         {
             _spline.SlowestAiStates.Enter(value, this);
-            _spline.SlowestAiStates.Leave(field, this);
-            field = value;
+            _spline.SlowestAiStates.Leave(_currentSplinePointId, this);
+            _currentSplinePointId = value;
         }
     }
 
+    private int _currentSplinePointId;
+    
     public long SpawnProtectionEnds { get; set; }
     public float SafetyDistanceSquared { get; set; } = 20 * 20;
     public float Acceleration { get; set; }
@@ -445,6 +446,39 @@ public class AiState : IDisposable
         }
 
         return (null, float.MaxValue);
+    }
+
+    private bool IsObstacle(EntryCar playerCar)
+    {
+        float aiRectWidth = 4; // Lane width
+        float halfAiRectWidth = aiRectWidth / 2;
+        float aiRectLength = 10; // length of rectangle infront of ai traffic
+        float aiRectOffset = 1; // offset of the rectangle from ai position
+
+        float obstacleRectWidth = 1; // width of obstacle car 
+        float obstacleRectLength = 1; // length of obstacle car
+        float halfObstacleRectWidth = obstacleRectWidth / 2;
+        float halfObstanceRectLength = obstacleRectLength / 2;
+
+        Vector3 forward = Vector3.Transform(-Vector3.UnitX, Matrix4x4.CreateRotationY(Status.Rotation.X));
+        Matrix4x4 aiViewMatrix = Matrix4x4.CreateLookAt(Status.Position, Status.Position + forward, Vector3.UnitY);
+
+        Matrix4x4 targetWorldViewMatrix = Matrix4x4.CreateRotationY(playerCar.Status.Rotation.X) * Matrix4x4.CreateTranslation(playerCar.Status.Position) * aiViewMatrix;
+
+        Vector3 targetFrontLeft = Vector3.Transform(new Vector3(-halfObstanceRectLength, 0, halfObstacleRectWidth), targetWorldViewMatrix);
+        Vector3 targetFrontRight = Vector3.Transform(new Vector3(-halfObstanceRectLength, 0, -halfObstacleRectWidth), targetWorldViewMatrix);
+        Vector3 targetRearLeft = Vector3.Transform(new Vector3(halfObstanceRectLength, 0, halfObstacleRectWidth), targetWorldViewMatrix);
+        Vector3 targetRearRight = Vector3.Transform(new Vector3(halfObstanceRectLength, 0, -halfObstacleRectWidth), targetWorldViewMatrix);
+
+        static bool IsPointInside(Vector3 point, float width, float length, float offset)
+            => MathF.Abs(point.X) >= width || (-point.Z >= offset && -point.Z <= offset + length);
+
+        bool isObstacle = IsPointInside(targetFrontLeft, halfAiRectWidth, aiRectLength, aiRectOffset)
+                          || IsPointInside(targetFrontRight, halfAiRectWidth, aiRectLength, aiRectOffset)
+                          || IsPointInside(targetRearLeft, halfAiRectWidth, aiRectLength, aiRectOffset)
+                          || IsPointInside(targetRearRight, halfAiRectWidth, aiRectLength, aiRectOffset);
+
+        return isObstacle;
     }
 
     public void DetectObstacles()

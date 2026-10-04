@@ -1,6 +1,7 @@
 ﻿using AssettoServer.Server.Ai.Splines;
 using AssettoServer.Server.Configuration;
 using AssettoServer.Server.OpenSlotFilters;
+using AssettoServer.Server.Plugin;
 using Autofac;
 using Microsoft.Extensions.Hosting;
 
@@ -21,7 +22,7 @@ public class AiModule : Module
 
         if (_configuration.Extra.EnableAi)
         {
-            builder.RegisterType<AiBehavior>().AsSelf().As<IHostedService>().SingleInstance();
+            builder.RegisterType<AiBehavior>().AsSelf().As<IAssettoServerAutostart>().SingleInstance();
             builder.RegisterType<AiUpdater>().AsSelf().SingleInstance().AutoActivate();
             builder.RegisterType<AiSlotFilter>().As<IOpenSlotFilter>();
             

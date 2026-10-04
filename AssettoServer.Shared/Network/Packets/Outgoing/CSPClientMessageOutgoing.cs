@@ -1,5 +1,4 @@
 ﻿using AssettoServer.Shared.Network.Packets.Shared;
-using AssettoServer.Shared.Utils;
 
 namespace AssettoServer.Shared.Network.Packets.Outgoing;
 
@@ -24,7 +23,7 @@ public abstract class CSPClientMessageOutgoing : IOutgoingNetworkPacket
 
             binWriter.Write((ushort)Type);
             ToWriter(binWriter);
-            Data = stream.GetMemory();
+            Data = stream.GetBuffer().AsMemory(0, (int)stream.Position);
         }
 
         if (ChatEncoded)

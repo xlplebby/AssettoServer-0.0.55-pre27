@@ -6,6 +6,7 @@ using AssettoServer.Server.Configuration;
 using AssettoServer.Shared.Network.Packets;
 using AssettoServer.Shared.Network.Packets.Incoming;
 using AssettoServer.Shared.Network.Packets.Shared;
+using Serilog;
 
 namespace AssettoServer.Network;
 
@@ -24,7 +25,7 @@ public class CSPClientMessageHandler
         _configuration = configuration;
         
         cspClientMessageTypeManager.RegisterOnlineEvent<CollisionUpdatePacket>((_, _) => { });
-        cspClientMessageTypeManager.RegisterOnlineEvent<TeleportCarPacket>((_, _) => { });
+        cspClientMessageTypeManager.RegisterOnlineEvent<TeleportCarPacket>(OnTeleportCar);
         cspClientMessageTypeManager.RegisterOnlineEvent<RequestResetPacket>(OnResetCar);
         cspClientMessageTypeManager.RegisterOnlineEvent<LuaReadyPacket>(OnLuaReady);
     }
@@ -57,7 +58,7 @@ public class CSPClientMessageHandler
 
                     if (_configuration.Extra.DebugClientMessages)
                     {
-                        sender.Logger.Verbose("UDP client message received from {ClientName} ({SessionId}), type {Type}, data {Data}",
+                        Log.Verbose("UDP client message received from {ClientName} ({SessionId}), type {Type}, data {Data}",
                             sender.Name, sender.SessionId, packetType, clientMessage.Data);
                     }
 
@@ -204,6 +205,12 @@ public class CSPClientMessageHandler
     {
         if (!_configuration.Extra.EnableCarReset) return;
         sender.EntryCar.TryResetPosition();
+    }
+
+    private void OnTeleportCar(ACTcpClient sender, TeleportCarPacket packet)
+    {
+        if (!sender.IsAdministrator) return;
+        _entryCarManager.EntryCars[packet.Target].Client?.SendPacket(packet);
     }
 
     private void OnLuaReady(ACTcpClient sender, LuaReadyPacket packet)
